@@ -21,9 +21,11 @@ pragma experimental ABIEncoderV2;
 import {
     TransactionData,
     Action,
+    Input,
+    TokenAmount,
+    Permit,
     AbsoluteTokenAmount,
-    Fee,
-    TokenAmount
+    Fee
 } from "../shared/Structs.sol";
 import { ECDSA } from "../shared/ECDSA.sol";
 
@@ -32,63 +34,67 @@ contract SignatureVerifier {
 
     bytes32 internal immutable domainSeparator_;
 
-    bytes32 internal constant DOMAIN_SEPARATOR_TYPEHASH = keccak256(
-        abi.encodePacked("EIP712Domain(", "string name,", "address verifyingContract", ")")
-    );
-    bytes32 internal constant TX_DATA_TYPEHASH = keccak256(
-        abi.encodePacked(
-            TX_DATA_ENCODED_TYPE,
-            ABSOLUTE_TOKEN_AMOUNT_ENCODED_TYPE,
-            ACTION_ENCODED_TYPE,
-            FEE_ENCODED_TYPE,
-            TOKEN_AMOUNT_ENCODED_TYPE
-        )
-    );
-    bytes32 internal constant ABSOLUTE_TOKEN_AMOUNT_TYPEHASH = keccak256(
-        ABSOLUTE_TOKEN_AMOUNT_ENCODED_TYPE
-    );
-    bytes32 internal constant ACTION_TYPEHASH = keccak256(
-        abi.encodePacked(ACTION_ENCODED_TYPE, TOKEN_AMOUNT_ENCODED_TYPE)
-    );
-    bytes32 internal constant FEE_TYPEHASH = keccak256(FEE_ENCODED_TYPE);
+    bytes32 internal constant DOMAIN_SEPARATOR_TYPEHASH =
+        keccak256(
+            abi.encodePacked("EIP712Domain(", "string name,", "address verifyingContract", ")")
+        );
+    bytes32 internal constant TX_DATA_TYPEHASH =
+        keccak256(
+            abi.encodePacked(
+                TX_DATA_ENCODED_TYPE,
+                ACTION_ENCODED_TYPE,
+                FEE_ENCODED_TYPE,
+                INPUT_ENCODED_TYPE,
+                TOKEN_AMOUNT_ENCODED_TYPE
+            )
+        );
+    bytes32 internal constant ABSOLUTE_TOKEN_AMOUNT_TYPEHASH =
+        keccak256(ABSOLUTE_TOKEN_AMOUNT_ENCODED_TYPE);
+    bytes32 internal constant INPUT_TYPEHASH =
+        keccak256(
+            abi.encodePacked(INPUT_ENCODED_TYPE, TOKEN_AMOUNT_ENCODED_TYPE, PERMIT_ENCODED_TYPE)
+        );
     bytes32 internal constant TOKEN_AMOUNT_TYPEHASH = keccak256(TOKEN_AMOUNT_ENCODED_TYPE);
+    bytes32 internal constant PERMIT_TYPEHASH = keccak256(PERMIT_ENCODED_TYPE);
+    bytes32 internal constant ACTION_TYPEHASH =
+        keccak256(abi.encodePacked(ACTION_ENCODED_TYPE, TOKEN_AMOUNT_ENCODED_TYPE));
+    bytes32 internal constant FEE_TYPEHASH = keccak256(FEE_ENCODED_TYPE);
 
-    bytes internal constant TX_DATA_ENCODED_TYPE = abi.encodePacked(
-        "TransactionData(",
-        "Action[] actions,",
-        "TokenAmount[] inputs,",
-        "Fee fee,",
-        "AbsoluteTokenAmount[] requiredOutputs,",
-        "uint256 salt",
-        ")"
-    );
-    bytes internal constant ABSOLUTE_TOKEN_AMOUNT_ENCODED_TYPE = abi.encodePacked(
-        "AbsoluteTokenAmount(",
-        "address token,",
-        "uint256 amount",
-        ")"
-    );
-    bytes internal constant ACTION_ENCODED_TYPE = abi.encodePacked(
-        "Action(",
-        "bytes32 protocolAdapterName,",
-        "uint8 actionType,",
-        "TokenAmount[] tokenAmounts,",
-        "bytes data",
-        ")"
-    );
-    bytes internal constant FEE_ENCODED_TYPE = abi.encodePacked(
-        "Fee(",
-        "uint256 share,",
-        "address beneficiary",
-        ")"
-    );
-    bytes internal constant TOKEN_AMOUNT_ENCODED_TYPE = abi.encodePacked(
-        "TokenAmount(",
-        "address token,",
-        "uint256 amount,",
-        "uint8 amountType",
-        ")"
-    );
+    bytes internal constant TX_DATA_ENCODED_TYPE =
+        abi.encodePacked(
+            "TransactionData(",
+            "Action[] actions,",
+            "Input[] inputs,",
+            "Fee fee,",
+            "AbsoluteTokenAmount[] requiredOutputs,",
+            "uint256 salt",
+            ")"
+        );
+    bytes internal constant ABSOLUTE_TOKEN_AMOUNT_ENCODED_TYPE =
+        abi.encodePacked("AbsoluteTokenAmount(", "address token,", "uint256 absoluteAmount", ")");
+    bytes internal constant INPUT_ENCODED_TYPE =
+        abi.encodePacked("Input(", "TokenAmount tokenAmount,", "Permit permit", ")");
+    bytes internal constant TOKEN_AMOUNT_ENCODED_TYPE =
+        abi.encodePacked(
+            "TokenAmount(",
+            "address token,",
+            "uint256 amount,",
+            "uint8 amountType",
+            ")"
+        );
+    bytes internal constant PERMIT_ENCODED_TYPE =
+        abi.encodePacked("Permit(", "uint8 permitType,", "bytes permitCallData", ")");
+    bytes internal constant ACTION_ENCODED_TYPE =
+        abi.encodePacked(
+            "Action(",
+            "bytes32 protocolAdapterName,",
+            "uint8 actionType,",
+            "TokenAmount[] tokenAmounts,",
+            "bytes data",
+            ")"
+        );
+    bytes internal constant FEE_ENCODED_TYPE =
+        abi.encodePacked("Fee(", "uint256 share,", "address beneficiary", ")");
 
     constructor(string memory name) {
         domainSeparator_ = keccak256(
@@ -163,20 +169,49 @@ contract SignatureVerifier {
 
         uint256 length = tokenAmounts.length;
         for (uint256 i = 0; i < length; i++) {
-            tokenAmountsData = abi.encodePacked(
-                tokenAmountsData,
+            tokenAmountsData = abi.encodePacked(tokenAmountsData, hash(tokenAmounts[i]));
+        }
+
+        return keccak256(tokenAmountsData);
+    }
+
+    function hash(TokenAmount memory tokenAmount) internal pure returns (bytes32) {
+        return
+            keccak256(
+                abi.encode(
+                    TOKEN_AMOUNT_TYPEHASH,
+                    tokenAmount.token,
+                    tokenAmount.amount,
+                    tokenAmount.amountType
+                )
+            );
+    }
+
+    function hash(Input[] memory inputs) internal pure returns (bytes32) {
+        bytes memory inputsData = new bytes(0);
+
+        uint256 length = inputs.length;
+        for (uint256 i = 0; i < length; i++) {
+            inputsData = abi.encodePacked(
+                inputsData,
                 keccak256(
-                    abi.encode(
-                        TOKEN_AMOUNT_TYPEHASH,
-                        tokenAmounts[i].token,
-                        tokenAmounts[i].amount,
-                        tokenAmounts[i].amountType
-                    )
+                    abi.encode(INPUT_TYPEHASH, hash(inputs[i].tokenAmount), hash(inputs[i].permit))
                 )
             );
         }
 
-        return keccak256(tokenAmountsData);
+        return keccak256(inputsData);
+    }
+
+    function hash(Permit memory permit) internal pure returns (bytes32) {
+        return
+            keccak256(
+                abi.encode(
+                    PERMIT_TYPEHASH,
+                    permit.permitType,
+                    keccak256(abi.encodePacked(permit.permitCallData))
+                )
+            );
     }
 
     function hash(Fee memory fee) internal pure returns (bytes32) {
@@ -198,7 +233,7 @@ contract SignatureVerifier {
                     abi.encode(
                         ABSOLUTE_TOKEN_AMOUNT_TYPEHASH,
                         absoluteTokenAmounts[i].token,
-                        absoluteTokenAmounts[i].amount
+                        absoluteTokenAmounts[i].absoluteAmount
                     )
                 )
             );

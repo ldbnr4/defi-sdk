@@ -70,7 +70,7 @@ struct Component {
 // and salt parameter used to protect users from double spends.
 struct TransactionData {
     Action[] actions;
-    TokenAmount[] inputs;
+    Input[] inputs;
     Fee fee;
     AbsoluteTokenAmount[] requiredOutputs;
     uint256 salt;
@@ -87,7 +87,22 @@ struct Action {
 }
 
 // The struct consists of token address
-// its amount and amount type.
+// its amount, amount type, as well as
+// permit type and calldata.
+struct Input {
+    TokenAmount tokenAmount;
+    Permit permit;
+}
+
+// The struct consists of
+// permit type and calldata.
+struct Permit {
+    PermitType permitType;
+    bytes permitCallData;
+}
+
+// The struct consists of token address,
+// its amount, and amount type.
 struct TokenAmount {
     address token;
     uint256 amount;
@@ -105,9 +120,11 @@ struct Fee {
 // and its absolute amount.
 struct AbsoluteTokenAmount {
     address token;
-    uint256 amount;
+    uint256 absoluteAmount;
 }
 
 enum ActionType { None, Deposit, Withdraw }
 
 enum AmountType { None, Relative, Absolute }
+
+enum PermitType { None, DAI, EIP2612, Yearn }
