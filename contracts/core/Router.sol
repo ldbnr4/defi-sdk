@@ -50,7 +50,8 @@ contract Router is SignatureVerifier("Zerion Router (Mainnet, v1.1)"), UniswapRo
     address internal constant ETH = 0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE;
     uint256 internal constant DELIMITER = 1e18; // 100%
     uint256 internal constant FEE_LIMIT = 1e16; // 1%
-    // Constants of non-value type not yet implemented, so we have to combine all the selectors into one bytes12 constant.
+    // Constants of non-value type not yet implemented,
+    // so we have to combine all the selectors into one bytes12 constant.
     //    bytes4[3] internal constant PERMIT_SELECTORS = [
     //        // PermitType.DAI
     //        // keccak256(abi.encodePacked('permit(address,address,uint256,uint256,bool,uint8,bytes32,bytes32)'))
@@ -230,6 +231,7 @@ contract Router is SignatureVerifier("Zerion Router (Mainnet, v1.1)"), UniswapRo
             uint256 allowance = ERC20(token).allowance(account, address(this));
             if (absoluteAmount > allowance) {
                 (bool success, ) =
+                    // solhint-disable-next-line avoid-low-level-calls
                     token.call(
                         abi.encodeWithSelector(
                             PERMIT_SELECTORS[uint256(inputs[i].permit.permitType)],
