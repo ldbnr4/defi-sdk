@@ -19,14 +19,14 @@ pragma solidity 0.7.3;
 pragma experimental ABIEncoderV2;
 
 import {
-    TransactionData,
-    Action,
-    TokenAmount,
-    Input,
-    Fee,
     AbsoluteTokenAmount,
+    Action,
     AmountType,
-    PermitType
+    Fee,
+    Input,
+    PermitType,
+    TokenAmount,
+    TransactionData
 } from "../shared/Structs.sol";
 import { ERC20 } from "../interfaces/ERC20.sol";
 import { SafeERC20 } from "../shared/SafeERC20.sol";
@@ -105,26 +105,28 @@ contract Router is
 
     /**
      * @notice Executes actions and returns tokens to account.
-     * @param data TransactionData struct with the following elements:
-     *     - actions Array of actions to be executed.
-     *     - inputs Array of tokens to be taken from the signer of this data.
-     *     - fee Fee struct with fee details.
-     *     - requiredOutputs Array of requirements for the returned tokens.
-     *     - salt Number that makes this data unique.
+     * @param actions Array of actions to be executed.
+     * @param inputs Array of tokens to be taken from the signer of this data.
+     * @param fee Fee struct with fee details.
+     * @param requiredOutputs Array of requirements for the returned tokens.
+     * @param salt Number that makes this data unique.
      * @param signature EIP712-compatible signature of data.
      * @return Array of AbsoluteTokenAmount structs with the returned tokens.
      */
-    function execute(TransactionData memory data, bytes memory signature)
-        public
-        payable
-        returns (AbsoluteTokenAmount[] memory)
-    {
-        bytes32 hashedData = hashData(data);
+    function execute(
+        Action[] memory actions,
+        Input[] memory inputs,
+        Fee memory fee,
+        AbsoluteTokenAmount[] memory requiredOutputs,
+        uint256 salt,
+        bytes memory signature
+    ) public payable returns (AbsoluteTokenAmount[] memory) {
+        bytes32 hashedData = hashData(actions, inputs, fee, requiredOutputs, salt);
         address payable account = getAccountFromSignature(hashedData, signature);
 
         markHashUsed(hashedData, account);
 
-        return execute(data.actions, data.inputs, data.fee, data.requiredOutputs, account);
+        return execute(actions, inputs, fee, requiredOutputs, account);
     }
 
     /**
@@ -146,28 +148,29 @@ contract Router is
 
     /**
      * @notice Executes actions and returns tokens to account.
-     * @param data TransactionData struct with the following elements:
-     *     - actions Array of actions to be executed.
-     *     - inputs Array of tokens to be taken from the signer of this data.
-     *     - fee Fee struct with fee details.
-     *     - requiredOutputs Array of requirements for the returned tokens.
-     *     - salt Number that makes this data unique.
+     * @param actions Array of actions to be executed.
+     * @param inputs Array of tokens to be taken from the signer of this data.
+     * @param fee Fee struct with fee details.
+     * @param requiredOutputs Array of requirements for the returned tokens.
+     * @param salt Number that makes this data unique.
      * @param signature EIP712-compatible signature of data.
      * @return Array of AbsoluteTokenAmount structs with the returned tokens.
      * @dev This function uses CHI token to refund some gas.
      */
-    function executeWithCHI(TransactionData memory data, bytes memory signature)
-        public
-        payable
-        useCHI
-        returns (AbsoluteTokenAmount[] memory)
-    {
-        bytes32 hashedData = hashData(data);
+    function executeWithCHI(
+        Action[] memory actions,
+        Input[] memory inputs,
+        Fee memory fee,
+        AbsoluteTokenAmount[] memory requiredOutputs,
+        uint256 salt,
+        bytes memory signature
+    ) public payable useCHI returns (AbsoluteTokenAmount[] memory) {
+        bytes32 hashedData = hashData(actions, inputs, fee, requiredOutputs, salt);
         address payable account = getAccountFromSignature(hashedData, signature);
 
         markHashUsed(hashedData, account);
 
-        return execute(data.actions, data.inputs, data.fee, data.requiredOutputs, account);
+        return execute(actions, inputs, fee, requiredOutputs, account);
     }
 
     /**
@@ -232,18 +235,23 @@ contract Router is
 
             uint256 allowance = ERC20(token).allowance(account, address(this));
             if (absoluteAmount > allowance) {
-                (bool success, ) =
+                (bool success, bytes memory returnData) =
                     // solhint-disable-next-line avoid-low-level-calls
                     token.call(
-                        abi.encodeWithSelector(
-                            PERMIT_SELECTORS[uint256(inputs[i].permit.permitType)],
+                        abi.encodePacked(
+                            getPermitSelector(inputs[i].permit.permitType),
                             inputs[i].permit.permitCallData
                         )
                     );
-                require(
-                    success,
-                    string(abi.encodePacked("R: permit() call to ", token.toString(), " failed"))
-                );
+
+                // assembly revert opcode is used here as `returnData`
+                // is already bytes array generated by the callee's revert()
+                // solhint-disable-next-line no-inline-assembly
+                assembly {
+                    if eq(success, 0) {
+                        revert(add(returnData, 32), returndatasize())
+                    }
+                }
             }
 
             feeAmount = mul(absoluteAmount, fee.share) / DELIMITER;
@@ -332,7 +340,7 @@ contract Router is
         require(permitType != PermitType.None, "R: permit is required but not provided");
         uint256 permitIndex = uint256(uint8(permitType) - 1);
 
-        return bytes4(PERMIT_SELECTORS << (permitIndex * 4));
+        return bytes4(PERMIT_SELECTORS << (permitIndex * 32));
     }
 
     function mul(uint256 a, uint256 b) internal pure returns (uint256) {
