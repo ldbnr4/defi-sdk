@@ -31,23 +31,28 @@ import {
 import { ERC20 } from "../interfaces/ERC20.sol";
 import { SafeERC20 } from "../shared/SafeERC20.sol";
 import { Helpers } from "../shared/Helpers.sol";
-import { SignatureVerifier } from "./SignatureVerifier.sol";
-import { Ownable } from "./Ownable.sol";
 import { Core } from "./Core.sol";
+import { Logger } from "./Logger.sol";
+import { Ownable } from "./Ownable.sol";
+import { SignatureVerifier } from "./SignatureVerifier.sol";
 import { UniswapRouter } from "./UniswapRouter.sol";
 
 interface Chi {
     function freeFromUpTo(address, uint256) external;
 }
 
-contract Router is SignatureVerifier("Zerion Router (Mainnet, v1.1)"), UniswapRouter, Ownable {
+contract Router is
+    Logger,
+    Ownable,
+    UniswapRouter,
+    SignatureVerifier("Zerion Router (Mainnet, v1.1)")
+{
     using SafeERC20 for ERC20;
     using Helpers for address;
 
     address internal immutable core_;
 
     address internal constant CHI = 0x0000000000004946c0e9F43F4Dee607b0eF1fA1c;
-    address internal constant ETH = 0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE;
     uint256 internal constant DELIMITER = 1e18; // 100%
     uint256 internal constant FEE_LIMIT = 1e16; // 1%
     // Constants of non-value type not yet implemented,
@@ -64,9 +69,6 @@ contract Router is SignatureVerifier("Zerion Router (Mainnet, v1.1)"), UniswapRo
     //        0x53ab5ce3
     //    ];
     bytes12 internal constant PERMIT_SELECTORS = 0x8fcbaf0cd505accf53ab5ce3;
-
-    event Executed(address indexed account, uint256 indexed share, address indexed beneficiary);
-    event TokenTransfer(address indexed token, address indexed account, uint256 indexed amount);
 
     modifier useCHI {
         uint256 gasStart = gasleft();
