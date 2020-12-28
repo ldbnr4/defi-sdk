@@ -127,4 +127,4 @@ enum ActionType { None, Deposit, Withdraw }
 
 enum AmountType { None, Relative, Absolute }
 
-enum PermitType { None, DAI, EIP2612, Yearn }
+enum PermitType { None, EIP2612, DAI, Yearn }

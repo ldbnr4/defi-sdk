@@ -32,7 +32,7 @@ import { ERC20 } from "../interfaces/ERC20.sol";
 import { SafeERC20 } from "../shared/SafeERC20.sol";
 import { Helpers } from "../shared/Helpers.sol";
 import { Core } from "./Core.sol";
-import { Logger } from "./Logger.sol";
+import { BaseRouter } from "./BaseRouter.sol";
 import { Ownable } from "./Ownable.sol";
 import { SignatureVerifier } from "./SignatureVerifier.sol";
 import { UniswapRouter } from "./UniswapRouter.sol";
@@ -42,8 +42,8 @@ interface Chi {
 }
 
 contract Router is
-    Logger,
     Ownable,
+    BaseRouter,
     UniswapRouter,
     SignatureVerifier("Zerion Router (Mainnet, v1.1)")
 {
@@ -53,22 +53,6 @@ contract Router is
     address internal immutable core_;
 
     address internal constant CHI = 0x0000000000004946c0e9F43F4Dee607b0eF1fA1c;
-    uint256 internal constant DELIMITER = 1e18; // 100%
-    uint256 internal constant FEE_LIMIT = 1e16; // 1%
-    // Constants of non-value type not yet implemented,
-    // so we have to combine all the selectors into one bytes12 constant.
-    //    bytes4[3] internal constant PERMIT_SELECTORS = [
-    //        // PermitType.DAI
-    //        // keccak256(abi.encodePacked('permit(address,address,uint256,uint256,bool,uint8,bytes32,bytes32)'))
-    //        0x8fcbaf0c,
-    //        // PermitType.EIP2612
-    //        // keccak256(abi.encodePacked('permit(address,address,uint256,uint256,uint8,bytes32,bytes32)'))
-    //        0xd505accf,
-    //        // PermitType.Yearn
-    //        // keccak256(abi.encodePacked('permit(address,address,uint256,uint256,bytes[65])'))
-    //        0x53ab5ce3
-    //    ];
-    bytes12 internal constant PERMIT_SELECTORS = 0x8fcbaf0cd505accf53ab5ce3;
 
     modifier useCHI {
         uint256 gasStart = gasleft();
@@ -88,9 +72,7 @@ contract Router is
 
     function returnLostTokens(address token, address payable beneficiary) external onlyOwner {
         if (token == ETH) {
-            // solhint-disable-next-line avoid-low-level-calls
-            (bool success, ) = beneficiary.call{ value: address(this).balance }(new bytes(0));
-            require(success, "R: bad beneficiary");
+            transferEther(beneficiary, address(this).balance, "R: bad beneficiary");
         } else {
             ERC20(token).safeTransfer(beneficiary, ERC20(token).balanceOf(address(this)), "R");
         }
@@ -132,9 +114,9 @@ contract Router is
     /**
      * @notice Executes actions and returns tokens to account.
      * @param actions Array of actions to be executed.
-     * @param  inputs Array of tokens to be taken from the signer of this data.
-     * @param  fee Fee struct with fee details.
-     * @param  requiredOutputs Array of requirements for the returned tokens.
+     * @param inputs Array of tokens to be taken from the signer of this data.
+     * @param fee Fee struct with fee details.
+     * @param requiredOutputs Array of requirements for the returned tokens.
      * @return Array of AbsoluteTokenAmount structs with the returned tokens.
      */
     function execute(
@@ -176,9 +158,9 @@ contract Router is
     /**
      * @notice Executes actions and returns tokens to account.
      * @param actions Array of actions to be executed.
-     * @param  inputs Array of tokens to be taken from the signer of this data.
-     * @param  fee Fee struct with fee details.
-     * @param  requiredOutputs Array of requirements for the returned tokens.
+     * @param inputs Array of tokens to be taken from the signer of this data.
+     * @param fee Fee struct with fee details.
+     * @param requiredOutputs Array of requirements for the returned tokens.
      * @return Array of AbsoluteTokenAmount structs with the returned tokens.
      * @dev This function uses CHI token to refund some gas.
      */
@@ -218,91 +200,20 @@ contract Router is
         Fee memory fee,
         address account
     ) internal {
-        address token;
-        uint256 absoluteAmount;
-        uint256 feeAmount;
-        uint256 length = inputs.length;
-
         if (fee.share > 0) {
             require(fee.beneficiary != address(0), "R: bad beneficiary");
             require(fee.share <= FEE_LIMIT, "R: bad fee");
         }
 
+        uint256 length = inputs.length;
         for (uint256 i = 0; i < length; i++) {
-            token = inputs[i].tokenAmount.token;
-            absoluteAmount = getAbsoluteAmount(inputs[i].tokenAmount, account);
-            require(absoluteAmount > 0, "R: zero amount");
-
-            uint256 allowance = ERC20(token).allowance(account, address(this));
-            if (absoluteAmount > allowance) {
-                (bool success, bytes memory returnData) =
-                    // solhint-disable-next-line avoid-low-level-calls
-                    token.call(
-                        abi.encodePacked(
-                            getPermitSelector(inputs[i].permit.permitType),
-                            inputs[i].permit.permitCallData
-                        )
-                    );
-
-                // assembly revert opcode is used here as `returnData`
-                // is already bytes array generated by the callee's revert()
-                // solhint-disable-next-line no-inline-assembly
-                assembly {
-                    if eq(success, 0) {
-                        revert(add(returnData, 32), returndatasize())
-                    }
-                }
-            }
-
-            feeAmount = mul(absoluteAmount, fee.share) / DELIMITER;
-
-            if (feeAmount > 0) {
-                ERC20(token).safeTransferFrom(account, fee.beneficiary, feeAmount, "R[1]");
-            }
-
-            ERC20(token).safeTransferFrom(account, core_, absoluteAmount - feeAmount, "R[2]");
-            emit TokenTransfer(token, account, absoluteAmount - feeAmount);
+            // ignore output amount as we don't need it
+            handleTokenInput(account, core_, inputs[i], fee);
         }
 
         if (msg.value > 0) {
-            feeAmount = mul(msg.value, fee.share) / DELIMITER;
-
-            if (feeAmount > 0) {
-                // solhint-disable-next-line avoid-low-level-calls
-                (bool success, ) = fee.beneficiary.call{ value: feeAmount }(new bytes(0));
-                require(success, "ETH transfer to beneficiary failed");
-            }
-
-            // solhint-disable-next-line avoid-low-level-calls
-            (bool success, ) = core_.call{ value: msg.value - feeAmount }(new bytes(0));
-            require(success, "ETH transfer to Core failed");
-            emit TokenTransfer(ETH, account, msg.value - feeAmount);
-        }
-    }
-
-    function getAbsoluteAmount(TokenAmount memory tokenAmount, address account)
-        internal
-        view
-        returns (uint256)
-    {
-        address token = tokenAmount.token;
-        AmountType amountType = tokenAmount.amountType;
-        uint256 amount = tokenAmount.amount;
-
-        require(
-            amountType == AmountType.Relative || amountType == AmountType.Absolute,
-            "R: bad amount type"
-        );
-
-        if (amountType == AmountType.Relative) {
-            require(amount <= DELIMITER, "R: bad amount");
-            if (amount == DELIMITER) {
-                return ERC20(token).balanceOf(account);
-            } else {
-                return mul(ERC20(token).balanceOf(account), amount) / DELIMITER;
-            }
-        } else {
-            return amount;
+            // ignore output amount as we don't need it
+            handleETHInput(account, core_, fee);
         }
     }
 
@@ -334,23 +245,5 @@ contract Router is
         }
 
         return modifiedOutputs;
-    }
-
-    function getPermitSelector(PermitType permitType) internal pure returns (bytes4) {
-        require(permitType != PermitType.None, "R: permit is required but not provided");
-        uint256 permitIndex = uint256(uint8(permitType) - 1);
-
-        return bytes4(PERMIT_SELECTORS << (permitIndex * 32));
-    }
-
-    function mul(uint256 a, uint256 b) internal pure returns (uint256) {
-        if (a == 0) {
-            return 0;
-        }
-
-        uint256 c = a * b;
-        require(c / a == b, "R: mul overflow");
-
-        return c;
     }
 }
