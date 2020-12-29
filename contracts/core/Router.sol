@@ -67,9 +67,6 @@ contract Router is
         core_ = core;
     }
 
-    // solhint-disable-next-line no-empty-blocks
-    receive() external payable {}
-
     function returnLostTokens(address token, address payable beneficiary) external onlyOwner {
         if (token == ETH) {
             transferEther(beneficiary, address(this).balance, "R: bad beneficiary");
